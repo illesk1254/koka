@@ -90,6 +90,14 @@
   .tabs #t4 { flex:0 0 auto; padding:14px 12px; }
   .upd { font-size:14px; color:#8a94a0; margin:0 0 10px; }
   .upd.bad { color:#ff7b7b; font-weight:bold; }
+  #top { position:sticky; top:0; z-index:5; }
+  .tabs { position:static; }
+  #helpbanner { background:var(--red); color:#fff; padding:10px 12px; font-weight:bold; font-size:16px; cursor:pointer; line-height:1.4; }
+  #helpbanner.hidden { display:none; }
+  select { width:100%; padding:12px; font-size:18px; margin:6px 0 14px; border:1px solid #3a434e; border-radius:8px; background:#0f1318; color:#e8eaed; }
+  .card .pl { background:#fff; color:#000; border:2px solid #000; border-radius:6px; padding:1px 8px; font-family:monospace; font-size:20px; letter-spacing:1px; }
+  .card .del { background:#555; font-size:14px; min-height:40px; padding:6px 12px; margin-top:10px; }
+  @media (max-width:420px) { .tabs button { font-size:13px; } .tabs #t4 { padding:14px 8px; } }
 </style>
 </head>
 <body>
@@ -116,11 +124,15 @@
 
 <!-- 3. lépés: fő oldal -->
 <div id="app" class="hidden">
+  <div id="top">
   <div class="tabs">
     <button id="t1" onclick="setTab(1)">Státusz</button>
     <button id="t2" onclick="setTab(2)">Térkép</button>
     <button id="t3" onclick="setTab(3)">Elérhetők</button>
+    <button id="t5" onclick="setTab(5)">Rendszám</button>
     <button id="t4" onclick="setTab(4)">⚙ Admin</button>
+  </div>
+  <div id="helpbanner" class="hidden" onclick="setTab(2)"></div>
   </div>
 
   <div id="p1" class="panel">
@@ -143,6 +155,22 @@
     <h3 id="avtitle"></h3>
     <p class="upd"></p>
     <div id="avlist"></div>
+  </div>
+
+  <div id="p5" class="panel hidden">
+    <h3>Észlelt rendszámok</h3>
+    <label>Rendszám</label>
+    <input id="pplate" placeholder="pl. ABC-123" autocapitalize="characters" autocomplete="off" style="text-transform:uppercase">
+    <label>Autótípus</label>
+    <input id="ptype" placeholder="pl. fehér Opel Astra" autocomplete="off">
+    <label>Hol észlelted?</label>
+    <select id="ppoint"></select>
+    <div class="err" id="pmsg"></div>
+    <button style="width:100%" onclick="addPlate()">Rögzítés</button>
+    <p class="upd"></p>
+    <input id="psearch" placeholder="🔍 Keresés (rendszám, típus, név)" autocomplete="off" oninput="render()">
+    <h3 id="ptitle"></h3>
+    <div id="plist"></div>
   </div>
 
   <div id="p4" class="panel hidden">
@@ -183,6 +211,7 @@ const POINTS = {1:[463,280],2:[457,405],3:[767,322],4:[938,376],5:[885,580],6:[7
 const def = { id: Math.random().toString(36).slice(2), stage:1, pw:'', name:'', car:'', available:true, point:0, help:false, tab:1 };
 let S = Object.assign({}, def, JSON.parse(sessionStorage.getItem('koka') || '{}'));
 let others = [];
+let plates = [];
 let lastOk = 0; // az utolsó sikeres frissítés ideje
 let modalRes = null;
 function ask(msg, okOnly) {
@@ -248,7 +277,11 @@ function saveProfile() {
   S.name = n; S.car = c; S.stage = 3; save(); render(); sync();
 }
 
-function setTab(t) { S.tab = t; save(); render(); }
+function setTab(t) {
+  S.tab = t; save();
+  if (t === 5 && !$('ppoint').value) $('ppoint').value = S.point || '';
+  render();
+}
 function toggleAvail() { S.available = !S.available; save(); render(); sync(); }
 function setPoint(p) { S.point = p; if (!p) S.help = false; save(); render(); sync(); }
 function toggleHelp() {
@@ -260,6 +293,30 @@ async function leave() {
   if (!(await ask('Biztosan kilépsz? Lekerülsz a térképről.'))) return;
   try { await post('/api/leave', { pw:S.pw, id:S.id }); } catch (e) {}
   resetSession();
+}
+
+const fmtT = (t) => {
+  const d = new Date(t), now = new Date();
+  const hm = d.toLocaleTimeString('hu-HU', { hour:'2-digit', minute:'2-digit' });
+  return d.toDateString() === now.toDateString() ? hm : d.toLocaleDateString('hu-HU', { month:'2-digit', day:'2-digit' }) + ' ' + hm;
+};
+
+async function addPlate() {
+  const plate = $('pplate').value.trim(), type = $('ptype').value.trim();
+  if (plate.replace(/[^A-Za-z0-9ÁÉÍÓÖŐÚÜŰáéíóöőúüű]/g, '').length < 2) { $('pmsg').textContent = 'Írj be egy rendszámot!'; return; }
+  try {
+    const r = await post('/api/plates/add', { pw:S.pw, id:S.id, name:S.name, plate, type, point:$('ppoint').value });
+    if (r.status !== 200 || !r.data.ok) { $('pmsg').textContent = r.data.error || 'Nem sikerült.'; return; }
+    $('pmsg').textContent = r.data.dup ? '✔ Már szerepelt – frissítettem (' + r.data.n + '. észlelés).' : '✔ Rögzítve.';
+    $('pplate').value = ''; $('ptype').value = '';
+    setTimeout(() => { $('pmsg').textContent = ''; }, 4000);
+    sync();
+  } catch (e) { $('pmsg').textContent = 'Nem érem el a szervert.'; }
+}
+async function delPlate(pid) {
+  if (!(await ask('Törlöd ezt a rendszámot a listáról?'))) return;
+  try { await post('/api/plates/del', { pw:S.pw, id:S.id, apw:S.apw || '', pid }); } catch (e) { notice('Nem érem el a szervert.'); return; }
+  sync();
 }
 
 function resetSession() {
@@ -296,7 +353,9 @@ async function sync() {
     lastOk = Date.now();
     if (r.status === 401) { S.stage = 1; save(); render(); return; }
     if (r.data.kicked) { resetSession(); notice('Az admin kijelentkeztetett.'); return; }
-    if (r.data.reset) { S.point = 0; S.help = false; save(); }
+    if (r.data.reset === 'clear') { S.point = 0; S.help = false; save(); }
+    else if (r.data.reset === 'unhelp') { S.help = false; save(); }
+    plates = r.data.plates || [];
     others = r.data.users; checkAlarm(); render();
   } catch (e) { /* hálózati hiba, a következő körben újra próbálja */ }
 }
@@ -313,6 +372,27 @@ function render() {
   $('p2').classList.toggle('hidden', S.tab !== 2);
   $('t3').classList.toggle('on', S.tab === 3);
   $('p3').classList.toggle('hidden', S.tab !== 3);
+  $('t5').classList.toggle('on', S.tab === 5);
+  $('p5').classList.toggle('hidden', S.tab !== 5);
+
+  // segélykérés sáv minden fülön
+  const helpers = others.filter(u => u.help);
+  const hbn = $('helpbanner');
+  hbn.classList.toggle('hidden', !helpers.length);
+  hbn.innerHTML = helpers.map(u => '⚠ SEGÍTSÉG: ' + esc(u.name) + ' – ' + esc(u.car) + ' – ' + (u.point ? u.point + '. pont' : 'nincs pont')).join('<br>');
+
+  // rendszámok
+  const q = ($('psearch').value || '').trim().toLowerCase();
+  const qk = q.replace(/[^a-z0-9áéíóöőúüű]/g, '');
+  const shown = plates.filter(p => !q || (qk && p.key.toLowerCase().includes(qk)) || p.plate.toLowerCase().includes(q) ||
+    p.type.toLowerCase().includes(q) || p.by.toLowerCase().includes(q)).sort((a, b) => b.last - a.last);
+  $('ptitle').textContent = (q ? 'Találat: ' : 'Összesen: ') + shown.length + ' rendszám';
+  const phtml = shown.map(p =>
+    `<div class="card"><span class="pl">${esc(p.plate)}</span> &nbsp;${esc(p.type || '–')}<br>` +
+    `📍 ${p.point ? p.point + '. pont' : 'nincs pont'} · ${fmtT(p.last)} · ${esc(p.by)}${p.n > 1 ? ' · ' + p.n + '× észlelve' : ''}` +
+    ((p.byId === S.id || S.apw) ? `<br><button class="del" onclick="delPlate('${p.pid}')">Törlés</button>` : '') + `</div>`).join('') || '<p>Még nincs rögzített rendszám.</p>';
+  if ($('plist').dataset.h !== phtml && Date.now() - lastTouch > 1200) { $('plist').innerHTML = phtml; $('plist').dataset.h = phtml; }
+
   $('t4').classList.toggle('on', S.tab === 4);
   $('p4').classList.toggle('hidden', S.tab !== 4);
   $('adlogin').classList.toggle('hidden', !!S.apw);
@@ -324,7 +404,7 @@ function render() {
       `<div class="card ${u.help ? 'help' : ''}"><b>${esc(u.name)}</b> – 🚗 ${esc(u.car)}<br>` +
       `${u.inactive ? '💤 inaktív (nincs jelzés)' : u.available ? '🟢 elérhető' : '⚪ nem elérhető'} · 📍 ${u.point ? u.point + '. pont' : 'nincs ponton'}${u.help ? ' · <b style="color:#ff7b7b">SEGÍTSÉG</b>' : ''}` +
       `<div class="row"><button style="background:#e67e00" ${u.point ? '' : 'disabled'} onclick="adminAct('${u.id}','clear')">Levétel a térképről</button>` +
-      `<button style="background:#d62828" onclick="adminAct('${u.id}','kick')">Kijelentkeztetés</button></div></div>`).join('') || '<p>Nincs bejelentkezett autó.</p>';
+      `<button style="background:#d62828" onclick="adminAct('${u.id}','kick')">Kijelentkeztetés</button></div>${u.help ? `<div class="row"><button style="background:#22a447" onclick="adminAct('${u.id}','unhelp')">Segélykérés lezárása</button></div>` : ''}</div>`).join('') || '<p>Nincs bejelentkezett autó.</p>';
     if ($('adlist').dataset.h !== html && Date.now() - lastTouch > 1200) { $('adlist').innerHTML = html; $('adlist').dataset.h = html; }
   }
 
@@ -391,6 +471,11 @@ function render() {
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 $('pw').addEventListener('keydown', e => e.key === 'Enter' && login());
+(function () {
+  const sel = $('ppoint');
+  sel.innerHTML = '<option value="">– nincs pont –</option>' + Array.from({ length: 13 }, (_, i) => `<option value="${i + 1}">${i + 1}. pont</option>`).join('');
+})();
+
 function updUpd() {
   const bad = !lastOk || Date.now() - lastOk > 10000;
   document.querySelectorAll('.upd').forEach(e => {

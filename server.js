@@ -6,10 +6,18 @@ const path = require('path');
 const PORT = process.env.PORT || 3000;
 const PASSWORD = '951753';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '753159'; // ezt cseréld le!
-const INACTIVE_MS = 15 * 60 * 1000; // ennyi jelzés nélküli idő után "inaktív" az autó (15 perc)
-const users = {};      // id -> adatok (csak a memóriában, újraindításkor törlődik)
+const INACTIVE_MS = 30 * 60 * 1000; // ennyi jelzés nélküli idő után "inaktív" az autó (30 perc)
+
+const users = {};       // id -> adatok (csak a memóriában, újraindításkor törlődik)
 const left = new Set(); // akik kiléptek vagy ki lettek léptetve
-const cmds = {};       // id -> 'clear' (admin levette a pontról)
+const cmds = {};        // id -> 'clear' (levétel a pontról) vagy 'unhelp' (segélykérés lezárása)
+
+// Rendszámok: fájlba is mentjük, hogy a szerver újraindítását túlélje (ha a tárhely engedi)
+const PLATE_FILE = path.join(__dirname, 'rendszamok.json');
+let plates = [];
+try { plates = JSON.parse(fs.readFileSync(PLATE_FILE, 'utf-8')); } catch (e) { plates = []; }
+const savePlates = () => fs.writeFile(PLATE_FILE, JSON.stringify(plates), () => {});
+const plateKey = (s) => String(s || '').toUpperCase().replace(/[^A-Z0-9ÁÉÍÓÖŐÚÜŰ]/g, '');
 
 const FILES = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -34,6 +42,7 @@ function send(res, code, obj) {
 }
 
 const list = () => Object.entries(users).map(([id, u]) => ({ id, ...u, inactive: Date.now() - u.seen > INACTIVE_MS }));
+const clean = (s, n) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, n);
 
 http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/api/login') {
@@ -65,33 +74,71 @@ http.createServer(async (req, res) => {
       users[b.id].point = 0;
       users[b.id].help = false;
       cmds[b.id] = 'clear';
+    } else if (b.action === 'unhelp' && users[b.id]) {
+      users[b.id].help = false;
+      cmds[b.id] = 'unhelp';
     }
     return send(res, 200, { ok: true });
   }
 
+  // ---- Rendszámok ----
+  if (req.method === 'POST' && req.url === '/api/plates/add') {
+    const b = await readBody(req);
+    if (b.pw !== PASSWORD) return send(res, 401, { ok: false });
+    const plate = clean(b.plate, 14).toUpperCase();
+    const key = plateKey(plate);
+    if (key.length < 2) return send(res, 400, { ok: false, error: 'Írj be egy rendszámot!' });
+    const type = clean(b.type, 40);
+    const point = Number(b.point) || 0;
+    const by = clean((users[b.id] && users[b.id].name) || b.name, 40);
+    const now = Date.now();
+    const old = plates.find((p) => p.key === key);
+    if (old) {
+      old.n += 1; old.last = now; old.point = point || old.point;
+      if (type) old.type = type;
+      old.by = by; old.byId = b.id || old.byId;
+      savePlates();
+      return send(res, 200, { ok: true, dup: true, n: old.n });
+    }
+    if (plates.length >= 3000) return send(res, 400, { ok: false, error: 'Tele a lista.' });
+    plates.push({ pid: Math.random().toString(36).slice(2, 10) + now.toString(36), key, plate, type, point, by, byId: b.id || '', first: now, last: now, n: 1 });
+    savePlates();
+    return send(res, 200, { ok: true, dup: false });
+  }
+
+  if (req.method === 'POST' && req.url === '/api/plates/del') {
+    const b = await readBody(req);
+    if (b.pw !== PASSWORD) return send(res, 401, { ok: false });
+    const p = plates.find((x) => x.pid === b.pid);
+    if (p && (b.apw === ADMIN_PASSWORD || (b.id && p.byId === b.id))) {
+      plates = plates.filter((x) => x.pid !== b.pid);
+      savePlates();
+    }
+    return send(res, 200, { ok: true });
+  }
+
+  // ---- Folyamatos szinkron ----
   if (req.method === 'POST' && req.url === '/api/sync') {
     const b = await readBody(req);
     if (b.pw !== PASSWORD) return send(res, 401, { ok: false });
-    if (b.id && left.has(b.id)) return send(res, 200, { ok: true, kicked: true, users: list() });
+    if (b.id && left.has(b.id)) return send(res, 200, { ok: true, kicked: true, users: list(), plates });
     let reset = false;
     if (b.id) {
-      if (cmds[b.id] === 'clear') {
-        delete cmds[b.id];
-        reset = true;
-        users[b.id] = { name: String(b.name || '').slice(0, 40), car: String(b.car || '').slice(0, 40),
-          available: !!b.available, point: 0, help: false, seen: Date.now() };
-      } else {
-        users[b.id] = {
-          name: String(b.name || '').slice(0, 40),
-          car: String(b.car || '').slice(0, 40),
-          available: !!b.available,
-          point: Number(b.point) || 0,
-          help: !!b.help,
-          seen: Date.now(),
-        };
-      }
+      const c = cmds[b.id];
+      delete cmds[b.id];
+      const u = {
+        name: clean(b.name, 40),
+        car: clean(b.car, 40),
+        available: !!b.available,
+        point: Number(b.point) || 0,
+        help: !!b.help,
+        seen: Date.now(),
+      };
+      if (c === 'clear') { u.point = 0; u.help = false; reset = 'clear'; }
+      else if (c === 'unhelp') { u.help = false; reset = 'unhelp'; }
+      users[b.id] = u;
     }
-    return send(res, 200, { ok: true, reset, users: list() });
+    return send(res, 200, { ok: true, reset, users: list(), plates });
   }
 
   const f = FILES[req.url.split('?')[0]];
