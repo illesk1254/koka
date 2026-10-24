@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="hu">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f1318">
+<title>Kóka – Pontok</title>
+<style>
+  :root { --green:#22a447; --red:#d62828; --gray:#8a8f98; --bg:#f2f4f7; --ink:#1b1f24; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:system-ui,Arial,sans-serif; background:var(--bg); color:var(--ink); padding-bottom:90px; }
+  .box { max-width:480px; margin:40px auto; background:#fff; padding:24px; border-radius:14px; box-shadow:0 2px 12px #0002; }
+  h2 { margin-top:0; }
+  input { width:100%; padding:12px; font-size:18px; margin:6px 0 14px; border:1px solid #bbb; border-radius:8px; }
+  button { font-size:18px; padding:12px 18px; border:0; border-radius:10px; background:#1f6feb; color:#fff; cursor:pointer; }
+  .err { color:var(--red); min-height:22px; }
+  .hidden { display:none; }
+  .tabs { display:flex; background:#fff; position:sticky; top:0; box-shadow:0 1px 6px #0002; z-index:5; }
+  .tabs button { flex:1; background:none; color:var(--ink); border-radius:0; border-bottom:4px solid transparent; }
+  .tabs button.on { border-bottom-color:#1f6feb; font-weight:bold; }
+  .panel { max-width:800px; margin:16px auto; padding:0 12px; }
+  .status { text-align:center; padding:40px 10px; border-radius:16px; color:#fff; font-size:30px; font-weight:bold; }
+  .status.on { background:var(--green); } .status.off { background:var(--gray); }
+  .mapwrap { position:relative; width:100%; }
+  .mapwrap img { width:100%; display:block; border-radius:10px; }
+  .pt { position:absolute; width:7%; aspect-ratio:1; max-width:44px; transform:translate(-50%,-50%); border-radius:50%;
+        border:3px solid #fff; background:#fff6; color:#000; font-weight:bold; display:flex; align-items:center; justify-content:center; font-size:14px; padding:0; }
+  .pt.g { background:var(--green); color:#fff; } .pt.r { background:var(--red); color:#fff; } .pt.n { background:var(--gray); color:#fff; }
+  .pt.me { outline:4px solid #1f6feb; }
+  .lbl { position:absolute; transform:translate(-50%,0); margin-top:22px; background:#fff; border:1px solid #333; border-radius:6px;
+         padding:1px 5px; font-size:12px; font-weight:bold; line-height:1.25; white-space:nowrap; pointer-events:none; z-index:2; }
+  .lbl.r { color:var(--red); border-color:var(--red); }
+  .card { background:#fff; border-radius:12px; padding:12px 14px; margin:8px 0; border-left:8px solid var(--green); box-shadow:0 1px 4px #0002; }
+  .card.help { border-left-color:var(--red); background:#fff0f0; }
+  .card b { font-size:18px; }
+  .grid { display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin:12px 0; }
+  .grid button { background:#fff; color:var(--ink); border:2px solid #aaa; padding:12px 0; }
+  .grid button.sel { background:var(--green); color:#fff; border-color:var(--green); }
+  ul { padding-left:20px; }
+  #helpbar { position:fixed; left:0; right:0; bottom:0; padding:12px; background:#fffe; box-shadow:0 -2px 8px #0003; }
+  #helpbtn { width:100%; padding:18px; font-size:22px; font-weight:bold; background:var(--red); }
+  #helpbtn.back { background:var(--green); }
+
+  /* Telefonbarát beállítások */
+  html { -webkit-text-size-adjust:100%; }
+  button, input { touch-action:manipulation; -webkit-tap-highlight-color:transparent; font-family:inherit; }
+  input { font-size:18px; } /* 16px alatt az iPhone ráközelít */
+  button { min-height:48px; }
+  body { padding-bottom:calc(100px + env(safe-area-inset-bottom)); }
+  #helpbar { padding-bottom:calc(12px + env(safe-area-inset-bottom)); }
+  .tabs button { padding:14px 4px; font-size:16px; }
+  .pt { min-width:32px; min-height:32px; }
+  .grid button { min-height:52px; font-size:20px; }
+  @media (max-width:600px) {
+    .box { margin:12px; padding:18px; }
+    .panel { margin:10px auto; padding:0 8px; }
+    .box button { width:100%; }
+    .status { font-size:26px; padding:32px 8px; }
+    .lbl { font-size:11px; padding:1px 4px; }
+    #p1 button { width:100%; }
+  }
+
+  /* Sötét mód */
+  :root { color-scheme:dark; }
+  body { background:#0f1318; color:#e8eaed; }
+  .box, .tabs, .card { background:#1b2129; color:#e8eaed; }
+  .box { box-shadow:0 2px 12px #0008; }
+  .tabs { box-shadow:0 1px 6px #0008; }
+  .tabs button { color:#e8eaed; }
+  input { background:#0f1318; color:#e8eaed; border-color:#3a434e; }
+  .card.help { background:#3a1a1a; }
+  .grid button { background:#1b2129; color:#e8eaed; border-color:#4a5561; }
+  .grid button.sel { background:var(--green); color:#fff; border-color:var(--green); }
+  #helpbar { background:#0f1318ee; box-shadow:0 -2px 8px #000a; }
+  .lbl { background:#1b2129; color:#fff; border-color:#8a94a0; }
+  .lbl.r { color:#ff7b7b; border-color:var(--red); }
+  .pt { background:#000a; color:#fff; }
+  .mapwrap img { filter:brightness(.9); }
+</style>
+</head>
+<body>
+
+<!-- 1. lépés: jelszó -->
+<div id="s1" class="box hidden">
+  <h2>Belépés</h2>
+  <label>Jelszó</label>
+  <input id="pw" type="password" inputmode="numeric" autocomplete="off">
+  <div class="err" id="e1"></div>
+  <button onclick="login()">Tovább</button>
+</div>
+
+<!-- 2. lépés: név + autó -->
+<div id="s2" class="box hidden">
+  <h2>Adatok</h2>
+  <label>Név</label>
+  <input id="name">
+  <label>Autó típusa</label>
+  <input id="car">
+  <div class="err" id="e2"></div>
+  <button onclick="saveProfile()">Tovább</button>
+</div>
+
+<!-- 3. lépés: fő oldal -->
+<div id="app" class="hidden">
+  <div class="tabs">
+    <button id="t1" onclick="setTab(1)">Státusz</button>
+    <button id="t2" onclick="setTab(2)">Térkép</button>
+    <button id="t3" onclick="setTab(3)">Elérhetők</button>
+  </div>
+
+  <div id="p1" class="panel">
+    <p id="who"></p>
+    <div id="status" class="status"></div>
+    <p style="text-align:center"><button onclick="toggleAvail()">Elérhető / Nem elérhető váltása</button></p>
+    <p style="text-align:center"><button style="background:#444" onclick="leave()">Kilépés</button></p>
+  </div>
+
+  <div id="p2" class="panel hidden">
+    <div class="mapwrap" id="mapwrap"><img src="terkep.jpg" alt="térkép"></div>
+    <p id="swp"><button style="background:#e67e00;width:100%" onclick="setPoint(0)">Váltás (leveszem magam a pontról)</button></p>
+    <p><b>Melyik ponton állsz?</b></p>
+    <div class="grid" id="grid"></div>
+    <p><b>Kik vannak fent:</b></p>
+    <ul id="list"></ul>
+  </div>
+
+  <div id="p3" class="panel hidden">
+    <h3 id="avtitle"></h3>
+    <div id="avlist"></div>
+  </div>
+
+  <div id="helpbar"><button id="helpbtn" onclick="toggleHelp()"></button></div>
+</div>
+
+<script>
+// Koordináták a térkép képén (1206 x 1436 képpont alapján)
+const W = 1206, H = 1436;
+const POINTS = {1:[463,280],2:[457,405],3:[767,322],4:[938,376],5:[885,580],6:[737,487],7:[493,533],
+  8:[498,652],9:[571,656],10:[306,663],11:[30,615],12:[617,829],13:[447,1160]};
+
+// A session csak a böngészőlap bezárásáig él, frissítésnél megmarad
+const def = { id: Math.random().toString(36).slice(2), stage:1, pw:'', name:'', car:'', available:true, point:0, help:false, tab:1 };
+let S = Object.assign({}, def, JSON.parse(sessionStorage.getItem('koka') || '{}'));
+let others = [];
+
+// Riasztó hang: bárkinek az oldalán megszólal, ha valaki segítséget kér
+const alarm = new Audio('riasztas.mp3');
+alarm.preload = 'auto';
+let helpIds = null; // az első szinkronnál csak megjegyezzük, ki kér már segítséget
+let unlocked = false;
+function unlockAudio() { // a telefonok csak érintés után engedik a hangot
+  if (unlocked) return;
+  unlocked = true;
+  alarm.muted = true;
+  alarm.play().then(() => { alarm.pause(); alarm.currentTime = 0; alarm.muted = false; })
+              .catch(() => { alarm.muted = false; unlocked = false; });
+}
+document.addEventListener('pointerdown', unlockAudio);
+function checkAlarm() {
+  const now = new Set(others.filter(u => u.help).map(u => u.id));
+  if (helpIds !== null) {
+    for (const id of now) if (!helpIds.has(id)) { try { alarm.currentTime = 0; alarm.play(); } catch (e) {} break; }
+  }
+  helpIds = now;
+}
+const $ = id => document.getElementById(id);
+function save() { sessionStorage.setItem('koka', JSON.stringify(S)); }
+
+async function post(url, body) {
+  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
+  return { status:r.status, data: await r.json() };
+}
+
+async function login() {
+  const pw = $('pw').value.trim();
+  try {
+    const r = await post('/api/login', { pw });
+    if (r.status === 200) { S.pw = pw; S.stage = 2; save(); render(); }
+    else $('e1').textContent = 'Hibás jelszó!';
+  } catch (e) { $('e1').textContent = 'Nem érem el a szervert.'; }
+}
+
+function saveProfile() {
+  const n = $('name').value.trim(), c = $('car').value.trim();
+  if (!n || !c) { $('e2').textContent = 'Kérlek töltsd ki mindkettőt!'; return; }
+  S.name = n; S.car = c; S.stage = 3; save(); render(); sync();
+}
+
+function setTab(t) { S.tab = t; save(); render(); }
+function toggleAvail() { S.available = !S.available; save(); render(); sync(); }
+function setPoint(p) { S.point = p; if (!p) S.help = false; save(); render(); sync(); }
+function toggleHelp() {
+  if (!S.help && !S.point) { alert('Előbb válaszd ki, melyik ponton állsz!'); return; }
+  S.help = !S.help; save(); render(); sync();
+}
+
+async function leave() {
+  if (!confirm('Biztosan kilépsz? Lekerülsz a térképről.')) return;
+  try { await post('/api/leave', { pw:S.pw, id:S.id }); } catch (e) {}
+  sessionStorage.removeItem('koka');
+  S = Object.assign({}, def, { id: Math.random().toString(36).slice(2) });
+  others = []; helpIds = null;
+  $('pw').value = ''; $('name').value = ''; $('car').value = '';
+  render();
+}
+
+async function sync() {
+  if (S.stage !== 3) return;
+  try {
+    const r = await post('/api/sync', { pw:S.pw, id:S.id, name:S.name, car:S.car, available:S.available, point:S.point, help:S.help });
+    if (r.status === 401) { S.stage = 1; save(); render(); return; }
+    others = r.data.users; checkAlarm(); render();
+  } catch (e) { /* hálózati hiba, a következő körben újra próbálja */ }
+}
+
+function render() {
+  $('s1').classList.toggle('hidden', S.stage !== 1);
+  $('s2').classList.toggle('hidden', S.stage !== 2);
+  $('app').classList.toggle('hidden', S.stage !== 3);
+  if (S.stage !== 3) return;
+
+  $('t1').classList.toggle('on', S.tab === 1);
+  $('t2').classList.toggle('on', S.tab === 2);
+  $('p1').classList.toggle('hidden', S.tab !== 1);
+  $('p2').classList.toggle('hidden', S.tab !== 2);
+  $('t3').classList.toggle('on', S.tab === 3);
+  $('p3').classList.toggle('hidden', S.tab !== 3);
+
+  $('who').textContent = S.name + ' – ' + S.car;
+  const st = $('status');
+  st.className = 'status ' + (S.available ? 'on' : 'off');
+  st.textContent = S.available ? 'ELÉRHETŐ' : 'NEM ELÉRHETŐ';
+
+  const hb = $('helpbtn');
+  hb.className = S.help ? 'back' : '';
+  hb.textContent = S.help ? 'Minden rendben – vissza zöldre' : 'SEGÍTSÉG KÉRÉS';
+
+  $('swp').classList.toggle('hidden', !S.point);
+  // gombrács
+  $('grid').innerHTML = '';
+  for (let i = 1; i <= 13; i++) {
+    const b = document.createElement('button');
+    b.textContent = i;
+    if (S.point === i) b.className = 'sel';
+    b.onclick = () => setPoint(i);
+    $('grid').appendChild(b);
+  }
+
+  // pontok a térképen
+  document.querySelectorAll('.pt,.lbl').forEach(e => e.remove());
+  for (const n in POINTS) {
+    const here = others.filter(u => u.point == n);
+    let cls = '';
+    if (here.some(u => u.help)) cls = 'r';
+    else if (here.some(u => u.available)) cls = 'g';
+    else if (here.length) cls = 'n';
+    const b = document.createElement('button');
+    b.className = 'pt ' + cls + (S.point == n ? ' me' : '');
+    b.textContent = n;
+    b.style.left = (POINTS[n][0] / W * 100) + '%';
+    b.style.top = (POINTS[n][1] / H * 100) + '%';
+    b.onclick = () => setPoint(+n);
+    $('mapwrap').appendChild(b);
+
+    if (here.length) {
+      const l = document.createElement('div');
+      const px = POINTS[n][0] / W * 100;
+      l.className = 'lbl' + (here.some(u => u.help) ? ' r' : '');
+      l.style.left = Math.min(Math.max(px, 12), 88) + '%';
+      l.style.top = (POINTS[n][1] / H * 100) + '%';
+      l.innerHTML = here.map(u => esc(u.name) + (u.help ? ' ⚠' : '')).join('<br>');
+      $('mapwrap').appendChild(l);
+    }
+  }
+
+  // elérhetők lista
+  const av = others.filter(u => u.available || u.help)
+    .sort((a, b) => (b.help - a.help) || a.name.localeCompare(b.name));
+  $('avtitle').textContent = 'Elérhető: ' + av.length + ' autó';
+  $('avlist').innerHTML = av.map(u =>
+    `<div class="card ${u.help ? 'help' : ''}"><b>${esc(u.name)}</b><br>🚗 ${esc(u.car)}<br>` +
+    `📍 ${u.point ? u.point + '. pont' : 'nincs ponton'}${u.help ? '<br><b style="color:#d62828">SEGÍTSÉGET KÉR!</b>' : ''}</div>`).join('')
+    || '<p>Nincs elérhető autó.</p>';
+
+  // lista
+  $('list').innerHTML = others.filter(u => u.point).map(u =>
+    `<li>${u.point}. pont – ${esc(u.name)} (${esc(u.car)}) ${u.help ? '🔴 SEGÍTSÉG' : u.available ? '🟢' : '⚪'}</li>`).join('') || '<li>Még senki.</li>';
+}
+function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+
+$('pw').addEventListener('keydown', e => e.key === 'Enter' && login());
+render();
+sync();
+setInterval(sync, 2000);
+</script>
+</body>
+</html>
