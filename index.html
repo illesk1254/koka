@@ -76,6 +76,9 @@
   .lbl.r { color:#ff7b7b; border-color:var(--red); }
   .pt { background:#000a; color:#fff; }
   .mapwrap img { filter:brightness(.9); }
+  .tabs #t4 { flex:0 0 auto; padding-left:14px; padding-right:14px; }
+  .card .row { display:flex; gap:8px; margin-top:10px; }
+  .card .row button { flex:1; font-size:15px; min-height:44px; padding:8px; }
 </style>
 </head>
 <body>
@@ -106,6 +109,7 @@
     <button id="t1" onclick="setTab(1)">Státusz</button>
     <button id="t2" onclick="setTab(2)">Térkép</button>
     <button id="t3" onclick="setTab(3)">Elérhetők</button>
+    <button id="t4" onclick="setTab(4)">⚙ Admin</button>
   </div>
 
   <div id="p1" class="panel">
@@ -127,6 +131,20 @@
   <div id="p3" class="panel hidden">
     <h3 id="avtitle"></h3>
     <div id="avlist"></div>
+  </div>
+
+  <div id="p4" class="panel hidden">
+    <div id="adlogin">
+      <h3>Admin</h3>
+      <input id="apw" type="password" placeholder="Admin jelszó" autocomplete="off">
+      <div class="err" id="e4"></div>
+      <button onclick="adminLogin()">Belépés</button>
+    </div>
+    <div id="adbox" class="hidden">
+      <h3 id="adtitle"></h3>
+      <div id="adlist"></div>
+      <p><button style="background:#444" onclick="adminLogout()">Admin kilépés</button></p>
+    </div>
   </div>
 
   <div id="helpbar"><button id="helpbtn" onclick="toggleHelp()"></button></div>
@@ -197,6 +215,10 @@ function toggleHelp() {
 async function leave() {
   if (!confirm('Biztosan kilépsz? Lekerülsz a térképről.')) return;
   try { await post('/api/leave', { pw:S.pw, id:S.id }); } catch (e) {}
+  resetSession();
+}
+
+function resetSession() {
   sessionStorage.removeItem('koka');
   S = Object.assign({}, def, { id: Math.random().toString(36).slice(2) });
   others = []; helpIds = null;
@@ -204,11 +226,32 @@ async function leave() {
   render();
 }
 
+async function adminLogin() {
+  const apw = $('apw').value.trim();
+  try {
+    const r = await post('/api/admin/check', { apw });
+    if (r.status === 200) { S.apw = apw; save(); $('apw').value = ''; $('e4').textContent = ''; render(); }
+    else $('e4').textContent = 'Hibás admin jelszó!';
+  } catch (e) { $('e4').textContent = 'Nem érem el a szervert.'; }
+}
+function adminLogout() { S.apw = ''; save(); render(); }
+async function adminAct(id, action) {
+  const u = others.find(x => x.id === id);
+  if (action === 'kick' && !confirm('Kijelentkezteted: ' + (u ? u.name : '') + '?')) return;
+  try {
+    const r = await post('/api/admin/action', { apw:S.apw, id, action });
+    if (r.status === 401) { S.apw = ''; save(); render(); alert('Az admin jelszó már nem érvényes.'); return; }
+  } catch (e) { alert('Nem érem el a szervert.'); return; }
+  sync();
+}
+
 async function sync() {
   if (S.stage !== 3) return;
   try {
     const r = await post('/api/sync', { pw:S.pw, id:S.id, name:S.name, car:S.car, available:S.available, point:S.point, help:S.help });
     if (r.status === 401) { S.stage = 1; save(); render(); return; }
+    if (r.data.kicked) { resetSession(); alert('Az admin kijelentkeztetett.'); return; }
+    if (r.data.reset) { S.point = 0; S.help = false; save(); }
     others = r.data.users; checkAlarm(); render();
   } catch (e) { /* hálózati hiba, a következő körben újra próbálja */ }
 }
@@ -225,6 +268,20 @@ function render() {
   $('p2').classList.toggle('hidden', S.tab !== 2);
   $('t3').classList.toggle('on', S.tab === 3);
   $('p3').classList.toggle('hidden', S.tab !== 3);
+  $('t4').classList.toggle('on', S.tab === 4);
+  $('p4').classList.toggle('hidden', S.tab !== 4);
+  $('adlogin').classList.toggle('hidden', !!S.apw);
+  $('adbox').classList.toggle('hidden', !S.apw);
+  if (S.apw) {
+    const all = others.slice().sort((a, b) => a.name.localeCompare(b.name));
+    $('adtitle').textContent = 'Összes bejelentkezett: ' + all.length;
+    const html = all.map(u =>
+      `<div class="card ${u.help ? 'help' : ''}"><b>${esc(u.name)}</b> – 🚗 ${esc(u.car)}<br>` +
+      `${u.available ? '🟢 elérhető' : '⚪ nem elérhető'} · 📍 ${u.point ? u.point + '. pont' : 'nincs ponton'}${u.help ? ' · <b style="color:#ff7b7b">SEGÍTSÉG</b>' : ''}` +
+      `<div class="row"><button style="background:#e67e00" ${u.point ? '' : 'disabled'} onclick="adminAct('${u.id}','clear')">Levétel a térképről</button>` +
+      `<button style="background:#d62828" onclick="adminAct('${u.id}','kick')">Kijelentkeztetés</button></div></div>`).join('') || '<p>Nincs bejelentkezett autó.</p>';
+    if ($('adlist').dataset.h !== html) { $('adlist').innerHTML = html; $('adlist').dataset.h = html; }
+  }
 
   $('who').textContent = S.name + ' – ' + S.car;
   const st = $('status');

@@ -5,8 +5,10 @@ const path = require('path');
 
 const PORT = process.env.PORT || 3000;
 const PASSWORD = '951753';
-const users = {};
-const left = new Set(); // akik kiléptek: a még úton lévő jelzésük se tegye vissza őket // id -> adatok (csak a memóriában, újraindításkor törlődik)
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '753159'; // ezt cseréld le!
+const users = {};      // id -> adatok (csak a memóriában, újraindításkor törlődik)
+const left = new Set(); // akik kiléptek vagy ki lettek léptetve
+const cmds = {};       // id -> 'clear' (admin levette a pontról)
 
 const FILES = {
   '/': ['index.html', 'text/html; charset=utf-8'],
@@ -30,6 +32,8 @@ function send(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
+const list = () => Object.entries(users).map(([id, u]) => ({ id, ...u }));
+
 http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/api/login') {
     const b = await readBody(req);
@@ -44,20 +48,49 @@ http.createServer(async (req, res) => {
     return send(res, 200, { ok: true });
   }
 
+  if (req.method === 'POST' && req.url === '/api/admin/check') {
+    const b = await readBody(req);
+    return send(res, b.apw === ADMIN_PASSWORD ? 200 : 401, { ok: b.apw === ADMIN_PASSWORD });
+  }
+
+  if (req.method === 'POST' && req.url === '/api/admin/action') {
+    const b = await readBody(req);
+    if (b.apw !== ADMIN_PASSWORD) return send(res, 401, { ok: false });
+    if (b.action === 'kick') {
+      delete users[b.id];
+      delete cmds[b.id];
+      left.add(b.id);
+    } else if (b.action === 'clear' && users[b.id]) {
+      users[b.id].point = 0;
+      users[b.id].help = false;
+      cmds[b.id] = 'clear';
+    }
+    return send(res, 200, { ok: true });
+  }
+
   if (req.method === 'POST' && req.url === '/api/sync') {
     const b = await readBody(req);
     if (b.pw !== PASSWORD) return send(res, 401, { ok: false });
-    if (b.id && !left.has(b.id)) {
-      users[b.id] = {
-        name: String(b.name || '').slice(0, 40),
-        car: String(b.car || '').slice(0, 40),
-        available: !!b.available,
-        point: Number(b.point) || 0,
-        help: !!b.help,
-        seen: Date.now(),
-      };
+    if (b.id && left.has(b.id)) return send(res, 200, { ok: true, kicked: true, users: list() });
+    let reset = false;
+    if (b.id) {
+      if (cmds[b.id] === 'clear') {
+        delete cmds[b.id];
+        reset = true;
+        users[b.id] = { name: String(b.name || '').slice(0, 40), car: String(b.car || '').slice(0, 40),
+          available: !!b.available, point: 0, help: false, seen: Date.now() };
+      } else {
+        users[b.id] = {
+          name: String(b.name || '').slice(0, 40),
+          car: String(b.car || '').slice(0, 40),
+          available: !!b.available,
+          point: Number(b.point) || 0,
+          help: !!b.help,
+          seen: Date.now(),
+        };
+      }
     }
-    return send(res, 200, { ok: true, users: Object.entries(users).map(([id, u]) => ({ id, ...u })) });
+    return send(res, 200, { ok: true, reset, users: list() });
   }
 
   const f = FILES[req.url.split('?')[0]];
