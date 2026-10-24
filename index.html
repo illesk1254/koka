@@ -79,6 +79,17 @@
   .tabs #t4 { flex:0 0 auto; padding-left:14px; padding-right:14px; }
   .card .row { display:flex; gap:8px; margin-top:10px; }
   .card .row button { flex:1; font-size:15px; min-height:44px; padding:8px; }
+  #modal { position:fixed; inset:0; background:#000b; display:flex; align-items:center; justify-content:center; z-index:100; padding:20px; }
+  #modal.hidden { display:none; }
+  #modal .mbox { background:#1b2129; color:#e8eaed; border-radius:14px; padding:20px; max-width:380px; width:100%; font-size:18px; }
+  #modal .mrow { display:flex; gap:10px; margin-top:18px; }
+  #modal .mrow button { flex:1; }
+  /* Fülsor: kis telefonon is elférjen az Admin fül */
+  .tabs { overflow-x:auto; }
+  .tabs button { min-width:0; padding:14px 2px; font-size:15px; white-space:nowrap; }
+  .tabs #t4 { flex:0 0 auto; padding:14px 12px; }
+  .upd { font-size:14px; color:#8a94a0; margin:0 0 10px; }
+  .upd.bad { color:#ff7b7b; font-weight:bold; }
 </style>
 </head>
 <body>
@@ -130,6 +141,7 @@
 
   <div id="p3" class="panel hidden">
     <h3 id="avtitle"></h3>
+    <p class="upd"></p>
     <div id="avlist"></div>
   </div>
 
@@ -142,12 +154,23 @@
     </div>
     <div id="adbox" class="hidden">
       <h3 id="adtitle"></h3>
+      <p class="upd"></p>
       <div id="adlist"></div>
       <p><button style="background:#444" onclick="adminLogout()">Admin kilépés</button></p>
     </div>
   </div>
 
   <div id="helpbar"><button id="helpbtn" onclick="toggleHelp()"></button></div>
+</div>
+
+<div id="modal" class="hidden">
+  <div class="mbox">
+    <div id="mtext"></div>
+    <div class="mrow">
+      <button id="mcancel" style="background:#555" onclick="modalClose(false)">Mégse</button>
+      <button id="mok" onclick="modalClose(true)">OK</button>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -160,6 +183,23 @@ const POINTS = {1:[463,280],2:[457,405],3:[767,322],4:[938,376],5:[885,580],6:[7
 const def = { id: Math.random().toString(36).slice(2), stage:1, pw:'', name:'', car:'', available:true, point:0, help:false, tab:1 };
 let S = Object.assign({}, def, JSON.parse(sessionStorage.getItem('koka') || '{}'));
 let others = [];
+let lastOk = 0; // az utolsó sikeres frissítés ideje
+let modalRes = null;
+function ask(msg, okOnly) {
+  return new Promise(res => {
+    $('mtext').textContent = msg;
+    $('mcancel').classList.toggle('hidden', !!okOnly);
+    $('modal').classList.remove('hidden');
+    modalRes = res;
+  });
+}
+function notice(msg) { return ask(msg, true); }
+function modalClose(v) { $('modal').classList.add('hidden'); if (modalRes) { modalRes(v); modalRes = null; } }
+
+// Ha épp érintik a képernyőt, az admin lista nem íródik újra (különben elvesztené a koppintást)
+let lastTouch = 0;
+document.addEventListener('touchstart', () => { lastTouch = Date.now(); }, { passive:true });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) sync(); });
 
 // Riasztó hang: bárkinek az oldalán megszólal, ha valaki segítséget kér
 const alarm = new Audio('riasztas.mp3');
@@ -185,8 +225,12 @@ const $ = id => document.getElementById(id);
 function save() { sessionStorage.setItem('koka', JSON.stringify(S)); }
 
 async function post(url, body) {
-  const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-  return { status:r.status, data: await r.json() };
+  const ctl = new AbortController();
+  const t = setTimeout(() => ctl.abort(), 8000); // ha 8 mp alatt nem válaszol, megszakítjuk és újrapróbáljuk
+  try {
+    const r = await fetch(url, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body), signal:ctl.signal, cache:'no-store' });
+    return { status:r.status, data: await r.json() };
+  } finally { clearTimeout(t); }
 }
 
 async function login() {
@@ -208,12 +252,12 @@ function setTab(t) { S.tab = t; save(); render(); }
 function toggleAvail() { S.available = !S.available; save(); render(); sync(); }
 function setPoint(p) { S.point = p; if (!p) S.help = false; save(); render(); sync(); }
 function toggleHelp() {
-  if (!S.help && !S.point) { alert('Előbb válaszd ki, melyik ponton állsz!'); return; }
+  if (!S.help && !S.point) { notice('Előbb válaszd ki, melyik ponton állsz!'); return; }
   S.help = !S.help; save(); render(); sync();
 }
 
 async function leave() {
-  if (!confirm('Biztosan kilépsz? Lekerülsz a térképről.')) return;
+  if (!(await ask('Biztosan kilépsz? Lekerülsz a térképről.'))) return;
   try { await post('/api/leave', { pw:S.pw, id:S.id }); } catch (e) {}
   resetSession();
 }
@@ -237,11 +281,11 @@ async function adminLogin() {
 function adminLogout() { S.apw = ''; save(); render(); }
 async function adminAct(id, action) {
   const u = others.find(x => x.id === id);
-  if (action === 'kick' && !confirm('Kijelentkezteted: ' + (u ? u.name : '') + '?')) return;
+  if (action === 'kick' && !(await ask('Kijelentkezteted: ' + (u ? u.name : '') + '?'))) return;
   try {
     const r = await post('/api/admin/action', { apw:S.apw, id, action });
-    if (r.status === 401) { S.apw = ''; save(); render(); alert('Az admin jelszó már nem érvényes.'); return; }
-  } catch (e) { alert('Nem érem el a szervert.'); return; }
+    if (r.status === 401) { S.apw = ''; save(); render(); notice('Az admin jelszó már nem érvényes.'); return; }
+  } catch (e) { notice('Nem érem el a szervert.'); return; }
   sync();
 }
 
@@ -249,8 +293,9 @@ async function sync() {
   if (S.stage !== 3) return;
   try {
     const r = await post('/api/sync', { pw:S.pw, id:S.id, name:S.name, car:S.car, available:S.available, point:S.point, help:S.help });
+    lastOk = Date.now();
     if (r.status === 401) { S.stage = 1; save(); render(); return; }
-    if (r.data.kicked) { resetSession(); alert('Az admin kijelentkeztetett.'); return; }
+    if (r.data.kicked) { resetSession(); notice('Az admin kijelentkeztetett.'); return; }
     if (r.data.reset) { S.point = 0; S.help = false; save(); }
     others = r.data.users; checkAlarm(); render();
   } catch (e) { /* hálózati hiba, a következő körben újra próbálja */ }
@@ -277,10 +322,10 @@ function render() {
     $('adtitle').textContent = 'Összes bejelentkezett: ' + all.length;
     const html = all.map(u =>
       `<div class="card ${u.help ? 'help' : ''}"><b>${esc(u.name)}</b> – 🚗 ${esc(u.car)}<br>` +
-      `${u.available ? '🟢 elérhető' : '⚪ nem elérhető'} · 📍 ${u.point ? u.point + '. pont' : 'nincs ponton'}${u.help ? ' · <b style="color:#ff7b7b">SEGÍTSÉG</b>' : ''}` +
+      `${u.inactive ? '💤 inaktív (nincs jelzés)' : u.available ? '🟢 elérhető' : '⚪ nem elérhető'} · 📍 ${u.point ? u.point + '. pont' : 'nincs ponton'}${u.help ? ' · <b style="color:#ff7b7b">SEGÍTSÉG</b>' : ''}` +
       `<div class="row"><button style="background:#e67e00" ${u.point ? '' : 'disabled'} onclick="adminAct('${u.id}','clear')">Levétel a térképről</button>` +
       `<button style="background:#d62828" onclick="adminAct('${u.id}','kick')">Kijelentkeztetés</button></div></div>`).join('') || '<p>Nincs bejelentkezett autó.</p>';
-    if ($('adlist').dataset.h !== html) { $('adlist').innerHTML = html; $('adlist').dataset.h = html; }
+    if ($('adlist').dataset.h !== html && Date.now() - lastTouch > 1200) { $('adlist').innerHTML = html; $('adlist').dataset.h = html; }
   }
 
   $('who').textContent = S.name + ' – ' + S.car;
@@ -309,7 +354,7 @@ function render() {
     const here = others.filter(u => u.point == n);
     let cls = '';
     if (here.some(u => u.help)) cls = 'r';
-    else if (here.some(u => u.available)) cls = 'g';
+    else if (here.some(u => u.available && !u.inactive)) cls = 'g';
     else if (here.length) cls = 'n';
     const b = document.createElement('button');
     b.className = 'pt ' + cls + (S.point == n ? ' me' : '');
@@ -325,13 +370,13 @@ function render() {
       l.className = 'lbl' + (here.some(u => u.help) ? ' r' : '');
       l.style.left = Math.min(Math.max(px, 12), 88) + '%';
       l.style.top = (POINTS[n][1] / H * 100) + '%';
-      l.innerHTML = here.map(u => esc(u.name) + (u.help ? ' ⚠' : '')).join('<br>');
+      l.innerHTML = here.map(u => esc(u.name) + (u.help ? ' ⚠' : u.inactive ? ' 💤' : '')).join('<br>');
       $('mapwrap').appendChild(l);
     }
   }
 
   // elérhetők lista
-  const av = others.filter(u => u.available || u.help)
+  const av = others.filter(u => (u.available && !u.inactive) || u.help)
     .sort((a, b) => (b.help - a.help) || a.name.localeCompare(b.name));
   $('avtitle').textContent = 'Elérhető: ' + av.length + ' autó';
   $('avlist').innerHTML = av.map(u =>
@@ -341,14 +386,28 @@ function render() {
 
   // lista
   $('list').innerHTML = others.filter(u => u.point).map(u =>
-    `<li>${u.point}. pont – ${esc(u.name)} (${esc(u.car)}) ${u.help ? '🔴 SEGÍTSÉG' : u.available ? '🟢' : '⚪'}</li>`).join('') || '<li>Még senki.</li>';
+    `<li>${u.point}. pont – ${esc(u.name)} (${esc(u.car)}) ${u.help ? '🔴 SEGÍTSÉG' : u.inactive ? '💤 inaktív' : u.available ? '🟢' : '⚪'}</li>`).join('') || '<li>Még senki.</li>';
 }
 function esc(s) { return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 
 $('pw').addEventListener('keydown', e => e.key === 'Enter' && login());
+function updUpd() {
+  const bad = !lastOk || Date.now() - lastOk > 10000;
+  document.querySelectorAll('.upd').forEach(e => {
+    e.className = 'upd' + (bad ? ' bad' : '');
+    e.textContent = bad ? '⚠ Nincs kapcsolat a szerverrel, próbálkozom…' : 'Élő frissítés · utoljára: ' + new Date(lastOk).toLocaleTimeString('hu-HU');
+  });
+}
+setInterval(updUpd, 1000);
+window.addEventListener('online', sync);
+window.addEventListener('focus', sync);
+
+// Folyamatos frissítés: a következő kör csak az előző befejezése után indul
+(async function loop() {
+  await sync();
+  setTimeout(loop, 2000);
+})();
 render();
-sync();
-setInterval(sync, 2000);
 </script>
 </body>
 </html>

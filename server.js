@@ -6,6 +6,7 @@ const path = require('path');
 const PORT = process.env.PORT || 3000;
 const PASSWORD = '951753';
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '753159'; // ezt cseréld le!
+const INACTIVE_MS = 15 * 60 * 1000; // ennyi jelzés nélküli idő után "inaktív" az autó (15 perc)
 const users = {};      // id -> adatok (csak a memóriában, újraindításkor törlődik)
 const left = new Set(); // akik kiléptek vagy ki lettek léptetve
 const cmds = {};       // id -> 'clear' (admin levette a pontról)
@@ -32,7 +33,7 @@ function send(res, code, obj) {
   res.end(JSON.stringify(obj));
 }
 
-const list = () => Object.entries(users).map(([id, u]) => ({ id, ...u }));
+const list = () => Object.entries(users).map(([id, u]) => ({ id, ...u, inactive: Date.now() - u.seen > INACTIVE_MS }));
 
 http.createServer(async (req, res) => {
   if (req.method === 'POST' && req.url === '/api/login') {
@@ -97,7 +98,7 @@ http.createServer(async (req, res) => {
   if (f) {
     fs.readFile(path.join(__dirname, f[0]), (err, data) => {
       if (err) { res.writeHead(404); return res.end('Hiányzik a fájl: ' + f[0]); }
-      res.writeHead(200, { 'Content-Type': f[1] });
+      res.writeHead(200, { 'Content-Type': f[1], 'Cache-Control': 'no-cache' });
       res.end(data);
     });
   } else {
